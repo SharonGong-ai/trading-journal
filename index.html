@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>交易复盘</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#0a0a0a;color:#f0f0f0;font-family:'PingFang SC','SF Pro Text','Helvetica Neue',sans-serif;min-height:100vh;overflow-x:hidden;}
+  input,select,textarea,button{font-family:inherit;}
+  input[type="date"]{color-scheme:dark;}
+  ::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-thumb{background:#333;border-radius:2px;}
+  .safe-bottom{padding-bottom:env(safe-area-inset-bottom,0px);}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const SUPABASE_URL = "https://wuzcddstemqayuagwghj.supabase.co";
+const SUPABASE_KEY = "sb_publishable_VkRuGBzafqD7r481XsDdBw_8QrR73hc";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ── CONSTANTS ──
+const modeLabels = {zt:"抓涨停",dx:"低吸",qx:"情绪单"};
+const emotionOpts = ["冷静","兴奋","犹豫","焦虑","不确定","强烈直觉"];
+const exitReasonOpts = ["不及预期主动走","止损","冲高回落卖出","扛单后割","卖飞了（踏空）","正常获利","其他"];
+const verdictOpts = ["执行完美","逻辑对执行差","逻辑错执行对","逻辑错执行也差"];
+const holdReasonOpts = [{value:"洗盘判断",label:"判断是洗盘"},{value:"不确定拖着",label:"不确定拖着"},{value:"不想认错",label:"不想认错"},{value:"其他",label:"其他"}];
+
+const emptyForm = () => ({
+  date:new Date().toISOString().slice(0,10),
+  stock:"",mode:"",entry_reason:"",entry_trigger:"",entry_emotion:"",
+  plan_exit:"",exit_reason:"",exit_emotion:"",
+  held_days:"",pnl_pct:"",hit_zt:"",did_hold:"",hold_reason:"",verdict:"",note:""
+});
+
+// ── UI ATOMS ──
+const c = {
+  gold:"#c8a96e", dark:"#0a0a0a", card:"#111", border:"#222",
+  red:"#e05c5c", green:"#4caf8a", dim:"#444", muted:"#666", text:"#f0f0f0"
+};
+
+function Label({children,required}){
+  return <div style={{fontSize:11,color:c.muted,marginBottom:5,letterSpacing:.5,textTransform:"uppercase"}}>
+    {children}{required&&<span style={{color:c.red}}> *</span>}
+  </div>;
+}
+function Field({children,mt=16}){return <div style={{marginBottom:mt}}>{children}</div>;}
+
+function Input({value,onChange,placeholder,type="text"}){
+  return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+    style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${c.border}`,
+    background:"#0d0d0d",color:c.text,fontSize:15,outline:"none"}}/>;
+}
+function Textarea({value,onChange,placeholder,rows=2}){
+  return <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
+    style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${c.border}`,
+    background:"#0d0d0d",color:c.text,fontSize:15,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>;
+}
+function Dropdown({value,onChange,options,placeholder}){
+  return <select value={value} onChange={e=>onChange(e.target.value)}
+    style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${c.border}`,
+    background:"#0d0d0d",color:value?c.text:c.muted,fontSize:15,outline:"none",appearance:"none"}}>
+    <option value="" disabled>{placeholder}</option>
+    {options.map(o=><option key={o.value??o} value={o.value??o}>{o.label??o}</option>)}
+  </select>;
+}
+function Chips({value,onChange,options}){
+  return <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+    {options.map(o=>{
+      const v=o.value??o,active=value===v;
+      return <button key={v} onClick={()=>onChange(active?"":v)}
+        style={{padding:"8px 16px",borderRadius:20,fontSize:13,cursor:"pointer",transition:"all .15s",
+        border:active?`1.5px solid ${c.gold}`:`1.5px solid ${c.border}`,
+        background:active?"#1e1608":"#0d0d0d",color:active?c.gold:c.dim}}>
+        {o.label??o}
+      </button>;
+    })}
+  </div>;
+}
+function Btn({children,onClick,variant="primary",disabled=false,style={}}){
+  const styles={
+    primary:{background:c.gold,color:"#0a0a0a",border:"none"},
+    ghost:{background:"#151515",color:c.dim,border:`1px solid ${c.border}`},
+    danger:{background:"#1a0000",color:c.red,border:`1px solid #3a0000`},
+  };
+  return <button onClick={onClick} disabled={disabled}
+    style={{padding:"13px 20px",borderRadius:12,fontSize:15,fontWeight:600,cursor:disabled?"not-allowed":"pointer",
+    opacity:disabled?.5:1,width:"100%",...styles[variant],...style}}>
+    {children}
+  </button>;
+}
+
+function ModeBadge({mode}){
+  const map={zt:{bg:"#1a0e00",br:c.gold,tx:c.gold},dx:{bg:"#001a0e",br:c.green,tx:c.green},qx:{bg:"#1a0000",br:c.red,tx:c.red}};
+  const s=map[mode]||{bg:"#1a1a1a",br:c.border,tx:c.dim};
+  return <span style={{padding:"3px 10px",borderRadius:12,border:`1px solid ${s.br}`,background:s.bg,color:s.tx,fontSize:12,fontWeight:600}}>{modeLabels[mode]??mode}</span>;
+}
+function PnlBadge({pct}){
+  const n=parseFloat(pct);
+  if(isNaN(n))return <span style={{color:c.dim}}>—</span>;
+  return <span style={{color:n>0?c.red:n<0?c.green:c.muted,fontWeight:700}}>{n>0?"+":""}{n}%</span>;
+}
+function StatCard({label,value,sub,color}){
+  return <div style={{background:c.card,border:`1px solid ${c.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:0}}>
+    <div style={{fontSize:11,color:c.muted,marginBottom:4}}>{label}</div>
+    <div style={{fontSize:20,fontWeight:700,color:color??c.text}}>{value}</div>
+    {sub&&<div style={{fontSize:11,color:c.dim,marginTop:2}}>{sub}</div>}
+  </div>;
+}
+function Divider(){return <div style={{height:1,background:"#181818",margin:"20px 0"}}/>;}
+function Toast({msg}){
+  if(!msg)return null;
+  return <div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",background:"#0d1a0d",
+    border:`1px solid ${c.green}44`,borderRadius:10,padding:"10px 20px",color:c.green,fontSize:13,
+    zIndex:999,whiteSpace:"nowrap",boxShadow:"0 4px 20px #00000088"}}>
+    ✓ {msg}
+  </div>;
+}
+
+// ── STATS ──
+function computeStats(trades){
+  const byMode={zt:[],dx:[],qx:[]};
+  trades.forEach(t=>{if(byMode[t.mode])byMode[t.mode].push(t);});
+  function ms(arr){
+    if(!arr.length)return null;
+    const wp=arr.filter(t=>t.pnl_pct!=null&&!isNaN(parseFloat(t.pnl_pct)));
+    const wins=wp.filter(t=>parseFloat(t.pnl_pct)>0);
+    const losses=wp.filter(t=>parseFloat(t.pnl_pct)<0);
+    const avg=a=>a.length?(a.reduce((s,t)=>s+parseFloat(t.pnl_pct),0)/a.length).toFixed(2):null;
+    return{
+      count:arr.length,
+      winRate:wp.length?(wins.length/wp.length*100).toFixed(0):null,
+      totalPnl:wp.length?wp.reduce((s,t)=>s+parseFloat(t.pnl_pct),0).toFixed(2):null,
+      riskReward:(wins.length&&losses.length)?(Math.abs(wins.reduce((s,t)=>s+parseFloat(t.pnl_pct),0)/wins.length)/Math.abs(losses.reduce((s,t)=>s+parseFloat(t.pnl_pct),0)/losses.length)).toFixed(2):null,
+      avgPnl:avg(wp),avgWin:avg(wins),avgLoss:avg(losses),
+      holdCount:arr.filter(t=>t.did_hold==="yes").length,
+      excitedEntry:arr.filter(t=>t.entry_emotion==="兴奋").length,
+      hitZTCount:arr.filter(t=>t.hit_zt==="yes").length,
+    };
+  }
+  return{zt:ms(byMode.zt),dx:ms(byMode.dx),qx:ms(byMode.qx),total:trades.length};
+}
+
+// ── AUTH VIEW ──
+function AuthView({onAuth}){
+  const [email,setEmail]=useState("");
+  const [pass,setPass]=useState("");
+  const [mode,setMode]=useState("login");
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+  const [msg,setMsg]=useState("");
+
+  const [forgotMode,setForgotMode]=useState(false);
+
+  async function handleForgot(){
+    setErr("");setMsg("");setLoading(true);
+    try{
+      const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.href});
+      if(error)throw error;
+      setMsg("重置链接已发送到邮箱，请查收。");
+      setForgotMode(false);
+    }catch(e){setErr(e.message||"出错了");}
+    setLoading(false);
+  }
+
+  async function handle(){
+    setErr("");setMsg("");setLoading(true);
+    try{
+      if(mode==="login"){
+        const {data,error}=await sb.auth.signInWithPassword({email,password:pass});
+        if(error)throw error;
+        onAuth(data.user);
+      } else {
+        const {error}=await sb.auth.signUp({email,password:pass});
+        if(error)throw error;
+        setMsg("注册成功！请查收验证邮件，验证后再登录。");
+        setMode("login");
+      }
+    }catch(e){setErr(e.message||"出错了");}
+    setLoading(false);
+  }
+
+  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"0 24px"}}>
+    <div style={{marginBottom:40}}>
+      <div style={{fontSize:11,color:c.gold,letterSpacing:3,marginBottom:8}}>TRADING JOURNAL</div>
+      <div style={{fontSize:28,fontWeight:700,lineHeight:1.2}}>交易复盘</div>
+      <div style={{fontSize:13,color:c.dim,marginTop:8}}>驯服你的模式</div>
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:28,background:"#111",borderRadius:12,padding:4}}>
+      {["login","signup"].map(m=><button key={m} onClick={()=>{setMode(m);setErr("");setMsg("");}}
+        style={{flex:1,padding:"10px 0",borderRadius:10,border:"none",
+        background:mode===m?"#1e1608":"transparent",color:mode===m?c.gold:c.dim,
+        fontSize:14,cursor:"pointer",fontWeight:mode===m?600:400}}>
+        {m==="login"?"登录":"注册"}
+      </button>)}
+    </div>
+    <Field><Label required>邮箱</Label><Input type="email" value={email} onChange={setEmail} placeholder="your@email.com"/></Field>
+    <Field><Label required>密码</Label><Input type="password" value={pass} onChange={setPass} placeholder="至少6位"/></Field>
+    {err&&<div style={{color:c.red,fontSize:13,marginBottom:12,padding:"10px 14px",background:"#1a0000",borderRadius:8}}>{err}</div>}
+    {msg&&<div style={{color:c.green,fontSize:13,marginBottom:12,padding:"10px 14px",background:"#001a0e",borderRadius:8}}>{msg}</div>}
+    {!forgotMode
+      ?<>
+        <Btn onClick={handle} disabled={loading||!email||!pass}>{loading?"处理中…":mode==="login"?"登录":"注册"}</Btn>
+        {mode==="login"&&<button onClick={()=>{setForgotMode(true);setErr("");setMsg("");}} style={{width:"100%",marginTop:14,padding:"10px 0",background:"transparent",border:"none",color:c.muted,fontSize:13,cursor:"pointer"}}>忘记密码？</button>}
+      </>
+      :<>
+        <Btn onClick={handleForgot} disabled={loading||!email}>{loading?"发送中…":"发送重置链接到邮箱"}</Btn>
+        <button onClick={()=>setForgotMode(false)} style={{width:"100%",marginTop:14,padding:"10px 0",background:"transparent",border:"none",color:c.muted,fontSize:13,cursor:"pointer"}}>← 返回登录</button>
+      </>
+    }
+  </div>;
+}
+
+// ── FORM VIEW ──
+function FormView({onSave}){
+  const [form,setForm]=useState(emptyForm());
+  const [step,setStep]=useState(0);
+  const [saving,setSaving]=useState(false);
+  const set=k=>v=>setForm(f=>({...f,[k]:v}));
+
+  async function handleSave(){
+    if(!form.stock||!form.mode)return alert("至少填写股票代码和模式");
+    setSaving(true);
+    await onSave(form);
+    setForm(emptyForm());setStep(0);setSaving(false);
+  }
+
+  const steps=["入场","出场","复盘"];
+  return <div>
+    <div style={{display:"flex",marginBottom:24,background:"#111",borderRadius:12,overflow:"hidden",border:`1px solid ${c.border}`}}>
+      {steps.map((l,i)=><button key={i} onClick={()=>setStep(i)}
+        style={{flex:1,padding:"11px 0",border:"none",background:step===i?"#1e1608":"transparent",
+        color:step===i?c.gold:c.dim,borderBottom:step===i?`2px solid ${c.gold}`:`2px solid transparent`,
+        fontSize:13,cursor:"pointer",fontWeight:step===i?600:400}}>{l}</button>)}
+    </div>
+
+    {step===0&&<div>
+      <Field><Label required>日期</Label><Input type="date" value={form.date} onChange={set("date")}/></Field>
+      <Field><Label required>股票代码 / 名称</Label><Input value={form.stock} onChange={set("stock")} placeholder="如 000001 平安银行"/></Field>
+      <Field><Label required>模式</Label><Chips value={form.mode} onChange={set("mode")} options={[{value:"zt",label:"抓涨停"},{value:"dx",label:"低吸"},{value:"qx",label:"情绪单"}]}/></Field>
+      <Field><Label>入场逻辑（框架层面）</Label><Textarea value={form.entry_reason} onChange={set("entry_reason")} placeholder="符合什么条件？板块/量能/形态等"/></Field>
+      <Field><Label>实际触发（直觉/信号）</Label><Textarea value={form.entry_trigger} onChange={set("entry_trigger")} placeholder="最终为什么是这只？那一刻在想什么"/></Field>
+      <Field><Label>入场时情绪</Label><Chips value={form.entry_emotion} onChange={set("entry_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>预设出场条件</Label><Textarea value={form.plan_exit} onChange={set("plan_exit")} placeholder="买入时想好的：什么情况走，预期涨幅是多少"/></Field>
+      <Btn onClick={()=>setStep(1)}>下一步 →</Btn>
+    </div>}
+
+    {step===1&&<div>
+      <Field><Label>实际出场原因</Label><Dropdown value={form.exit_reason} onChange={set("exit_reason")} placeholder="选择出场原因" options={exitReasonOpts}/></Field>
+      <Field><Label>出场时情绪</Label><Chips value={form.exit_emotion} onChange={set("exit_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>持仓天数</Label><Input type="number" value={form.held_days} onChange={set("held_days")} placeholder="0 = 当天出"/></Field>
+      <Field><Label>盈亏 %</Label><Input type="number" value={form.pnl_pct} onChange={set("pnl_pct")} placeholder="-7 或 +3.5"/></Field>
+      <Field><Label>当天是否成功打到涨停？</Label><Chips value={form.hit_zt} onChange={set("hit_zt")} options={[{value:"yes",label:"✓ 打到了"},{value:"no",label:"✗ 没打到"},{value:"na",label:"不适用"}]}/></Field>
+      <Field><Label>是否扛单了？</Label><Chips value={form.did_hold} onChange={set("did_hold")} options={[{value:"no",label:"没有"},{value:"yes",label:"扛了"}]}/></Field>
+      {form.did_hold==="yes"&&<Field><Label>扛单原因</Label><Chips value={form.hold_reason} onChange={set("hold_reason")} options={holdReasonOpts}/></Field>}
+      <div style={{display:"flex",gap:10}}>
+        <Btn onClick={()=>setStep(0)} variant="ghost" style={{flex:1}}>← 返回</Btn>
+        <Btn onClick={()=>setStep(2)} style={{flex:2}}>下一步 →</Btn>
+      </div>
+    </div>}
+
+    {step===2&&<div>
+      <Field><Label>执行评级</Label><Dropdown value={form.verdict} onChange={set("verdict")} placeholder="这笔单子的综合评价" options={verdictOpts}/></Field>
+      <Field><Label>备注（可选）</Label><Textarea value={form.note} onChange={set("note")} placeholder="任何想记下来的" rows={3}/></Field>
+      <div style={{background:"#0d0d0d",border:`1px solid ${c.border}`,borderRadius:12,padding:16,marginBottom:20}}>
+        <div style={{fontSize:11,color:c.muted,marginBottom:10,letterSpacing:1}}>PREVIEW</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <span style={{fontWeight:700,fontSize:16}}>{form.stock||"—"}</span>
+          <ModeBadge mode={form.mode}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",color:c.muted,fontSize:12}}>
+          <span>{form.date}</span><span>持仓 {form.held_days||"?"} 天</span><PnlBadge pct={form.pnl_pct}/>
+        </div>
+        {form.hit_zt==="yes"&&<div style={{marginTop:8,color:c.green,fontSize:12}}>✓ 成功打到涨停</div>}
+        {form.hit_zt==="no"&&<div style={{marginTop:8,color:c.muted,fontSize:12}}>✗ 未打到涨停</div>}
+        {form.did_hold==="yes"&&<div style={{marginTop:8,color:c.red,fontSize:12}}>⚠ 扛单了 · {form.hold_reason}</div>}
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <Btn onClick={()=>setStep(1)} variant="ghost" style={{flex:1}}>← 返回</Btn>
+        <Btn onClick={handleSave} disabled={saving} style={{flex:2}}>{saving?"保存中…":"保存记录"}</Btn>
+      </div>
+    </div>}
+  </div>;
+}
+
+// ── STATS VIEW ──
+function StatsView({trades}){
+  const stats=computeStats(trades);
+  if(!trades.length)return <div style={{textAlign:"center",color:c.dim,padding:60,fontSize:14}}>还没有记录，先去填几笔</div>;
+
+  function ModeBlock({mode,s}){
+    if(!s)return <div style={{color:c.dim,fontSize:13,padding:12,textAlign:"center"}}>暂无{modeLabels[mode]}记录</div>;
+    const holdPct=s.count?(s.holdCount/s.count*100).toFixed(0):0;
+    return <div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}><ModeBadge mode={mode}/><span style={{color:c.dim,fontSize:12}}>{s.count} 笔</span></div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <StatCard label="胜率" value={s.winRate?s.winRate+"%":"—"} color={s.winRate>50?c.green:c.red}/>
+        <StatCard label="总盈亏" value={s.totalPnl?(parseFloat(s.totalPnl)>0?"+":"")+s.totalPnl+"%":"—"} color={parseFloat(s.totalPnl)>0?c.red:parseFloat(s.totalPnl)<0?c.green:c.muted}/>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <StatCard label="平均盈亏/笔" value={s.avgPnl?s.avgPnl+"%":"—"} color={parseFloat(s.avgPnl)>=0?c.red:c.green}/>
+        <StatCard label="笔数" value={s.count} sub="笔"/>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <StatCard label="平均盈利" value={s.avgWin?"+"+s.avgWin+"%":"—"} color={c.red}/>
+        <StatCard label="平均亏损" value={s.avgLoss?s.avgLoss+"%":"—"} color={c.green}/>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <StatCard label="盈亏比" value={s.riskReward?s.riskReward:"—"} sub={s.riskReward?(parseFloat(s.riskReward)>=1?"盈利>亏损 ✓":"盈利<亏损 ✗"):""} color={s.riskReward&&parseFloat(s.riskReward)>=1?c.green:c.red}/>
+        <StatCard label="期望值/笔" value={s.winRate&&s.avgPnl?((parseFloat(s.winRate)/100*parseFloat(s.avgWin||0)+(1-parseFloat(s.winRate)/100)*parseFloat(s.avgLoss||0)).toFixed(2)+"%"):"—"} color={s.avgPnl&&parseFloat(s.avgPnl)>0?c.red:c.green}/>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <StatCard label="扛单率" value={holdPct+"%"} sub={`${s.holdCount}/${s.count}笔`} color={holdPct>30?c.red:c.text}/>
+        <StatCard label="兴奋入场" value={s.excitedEntry} sub="笔"/>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <StatCard label="涨停命中" value={s.hitZTCount} sub={`/ ${s.count}笔`} color={s.hitZTCount>0?c.green:c.dim}/>
+        <StatCard label="命中率" value={s.count?(s.hitZTCount/s.count*100).toFixed(0)+"%":"—"} color={s.hitZTCount/s.count>0.5?c.green:c.red}/>
+      </div>
+    </div>;
+  }
+
+  function Insights(){
+    const {zt,dx,qx}=stats;
+    const lines=[];
+    if(zt&&dx&&zt.winRate&&dx.winRate){
+      const d=parseFloat(zt.winRate)-parseFloat(dx.winRate);
+      lines.push(d>5?`涨停胜率高${Math.abs(d).toFixed(0)}pp，数据支持你的选择`:d<-5?`低吸胜率高${Math.abs(d).toFixed(0)}pp，但你80%在做涨停`:"两个模式胜率接近，区别可能在执行纪律");
+    }
+    if(zt&&zt.holdCount>0)lines.push(`涨停扛单${zt.holdCount}次，这是你当前最大的执行漏洞`);
+    if(zt&&zt.excitedEntry>zt.count*.5)lines.push(`涨停超过一半入场情绪是"兴奋"——注意这个信号`);
+    if(qx&&qx.count>0)lines.push(`情绪单${qx.count}笔，平均盈亏${qx.avgPnl??"?"}%——系统外的漏洞`);
+    if(!lines.length)return null;
+    return <div style={{background:"#0d0d0d",border:`1px solid ${c.gold}22`,borderRadius:12,padding:16,marginBottom:20}}>
+      <div style={{fontSize:11,color:c.gold,marginBottom:10,letterSpacing:1}}>PATTERN INSIGHTS</div>
+      {lines.map((l,i)=><div key={i} style={{fontSize:13,color:"#aaa",marginBottom:i<lines.length-1?8:0,paddingLeft:10,borderLeft:`2px solid ${c.gold}44`}}>{l}</div>)}
+    </div>;
+  }
+
+  return <div>
+    <Insights/>
+    <ModeBlock mode="zt" s={stats.zt}/><Divider/>
+    <ModeBlock mode="dx" s={stats.dx}/><Divider/>
+    <ModeBlock mode="qx" s={stats.qx}/>
+  </div>;
+}
+
+// ── LIST VIEW ──
+function ListRow({trade,onDelete}){
+  const [open,setOpen]=useState(false);
+  return <div style={{background:c.card,border:`1px solid #1a1a1a`,borderRadius:12,marginBottom:8,overflow:"hidden"}}>
+    <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",cursor:"pointer"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <ModeBadge mode={trade.mode}/>
+        <span style={{fontWeight:600,fontSize:15}}>{trade.stock}</span>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <PnlBadge pct={trade.pnl_pct}/>
+        <span style={{color:c.dim,fontSize:11}}>{trade.date}</span>
+      </div>
+    </div>
+    {open&&<div style={{padding:"0 16px 16px",borderTop:`1px solid #1a1a1a`}}>
+      {trade.entry_reason&&<div style={{marginTop:12,fontSize:13,color:c.muted}}>入场逻辑：<span style={{color:"#ccc"}}>{trade.entry_reason}</span></div>}
+      {trade.entry_trigger&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>实际触发：<span style={{color:"#ccc"}}>{trade.entry_trigger}</span></div>}
+      {trade.plan_exit&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>预设出场：<span style={{color:"#ccc"}}>{trade.plan_exit}</span></div>}
+      {trade.exit_reason&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>实际出场：<span style={{color:"#ccc"}}>{trade.exit_reason}</span></div>}
+      {trade.hit_zt==="yes"&&<div style={{marginTop:6,fontSize:13,color:c.green}}>✓ 成功打到涨停</div>}
+      {trade.hit_zt==="no"&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>✗ 未打到涨停</div>}
+      {trade.did_hold==="yes"&&<div style={{marginTop:6,fontSize:13,color:c.red}}>⚠ 扛单：{trade.hold_reason}</div>}
+      {trade.verdict&&<div style={{marginTop:6,fontSize:13,color:c.gold}}>评级：{trade.verdict}</div>}
+      {trade.note&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>备注：<span style={{color:"#ccc"}}>{trade.note}</span></div>}
+      <button onClick={()=>onDelete(trade.id)} style={{marginTop:14,padding:"7px 16px",borderRadius:8,background:"transparent",border:`1px solid #2a2a2a`,color:c.dim,fontSize:12,cursor:"pointer"}}>删除</button>
+    </div>}
+  </div>;
+}
+
+
+// ── EXPORT VIEW ──
+function ExportView({trades}){
+  const [copied,setCopied]=useState(false);
+  const text=JSON.stringify(trades,null,2);
+
+  function handleCopy(){
+    navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
+  }
+
+  return <div>
+    <div style={{background:"#0d0d0d",border:`1px solid ${c.gold}22`,borderRadius:12,padding:16,marginBottom:20}}>
+      <div style={{fontSize:11,color:c.gold,marginBottom:6,letterSpacing:1}}>使用方法</div>
+      <div style={{fontSize:13,color:"#aaa",lineHeight:1.7}}>
+        点下方按钮复制全部数据，粘贴到和Claude的对话框里，Claude会自动分析你的交易模式。
+      </div>
+    </div>
+    {trades.length===0
+      ?<div style={{textAlign:"center",color:c.dim,padding:40,fontSize:14}}>暂无记录可导出</div>
+      :<>
+        <div style={{background:"#0d0d0d",border:`1px solid ${c.border}`,borderRadius:12,padding:14,
+          fontSize:11,color:c.dim,fontFamily:"monospace",maxHeight:220,overflowY:"auto",
+          wordBreak:"break-all",lineHeight:1.6,marginBottom:16,whiteSpace:"pre-wrap"}}>
+          {text}
+        </div>
+        <Btn onClick={handleCopy} variant={copied?"ghost":"primary"}>
+          {copied?"✓ 已复制到剪贴板":`复制全部数据（${trades.length} 笔）`}
+        </Btn>
+        <div style={{fontSize:11,color:c.dim,textAlign:"center",marginTop:10}}>
+          粘贴给Claude → 他会帮你分析模式和问题
+        </div>
+      </>
+    }
+  </div>;
+}
+
+// ── APP ──
+function App(){
+  const [user,setUser]=useState(null);
+  const [trades,setTrades]=useState([]);
+  const [tab,setTab]=useState("form");
+  const [toast,setToast]=useState("");
+  const [loading,setLoading]=useState(true);
+
+  function showToast(msg){setToast(msg);setTimeout(()=>setToast(""),2000);}
+
+  useEffect(()=>{
+    sb.auth.getSession().then(({data:{session}})=>{
+      if(session?.user)loadTrades(session.user);
+      else setLoading(false);
+    });
+    const {data:{subscription}}=sb.auth.onAuthStateChange((_,session)=>{
+      if(session?.user)loadTrades(session.user);
+      else{setUser(null);setTrades([]);setLoading(false);}
+    });
+    return()=>subscription.unsubscribe();
+  },[]);
+
+  async function loadTrades(u){
+    setUser(u);
+    const {data}=await sb.from("trades").select("*").eq("user_id",u.id).order("date",{ascending:false});
+    setTrades(data||[]);
+    setLoading(false);
+  }
+
+  async function handleSave(form){
+    const {data,error}=await sb.from("trades").insert([{...form,user_id:user.id}]).select();
+    if(!error&&data){setTrades(t=>[data[0],...t]);showToast("已保存");setTab("list");}
+    else alert("保存失败："+error?.message);
+  }
+
+  async function handleDelete(id){
+    if(!confirm("删除这笔记录？"))return;
+    const {error}=await sb.from("trades").delete().eq("id",id);
+    if(!error)setTrades(t=>t.filter(x=>x.id!==id));
+  }
+
+  async function handleLogout(){
+    await sb.auth.signOut();
+  }
+
+  if(loading)return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",color:c.muted}}>加载中…</div>;
+  if(!user)return <AuthView onAuth={u=>loadTrades(u)}/>;
+
+  const tabs=[{key:"form",label:"记录"},{key:"stats",label:`统计(${trades.length})`},{key:"list",label:"历史"},{key:"export",label:"导出"}];
+
+  return <div style={{minHeight:"100vh",background:c.dark}}>
+    <Toast msg={toast}/>
+    <div style={{maxWidth:480,margin:"0 auto",paddingBottom:80}}>
+      <div style={{padding:"28px 20px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+        <div>
+          <div style={{fontSize:11,color:c.gold,letterSpacing:2,marginBottom:4}}>TRADING JOURNAL</div>
+          <div style={{fontSize:22,fontWeight:700}}>交易复盘</div>
+          <div style={{fontSize:12,color:c.dim,marginTop:3}}>驯服你的模式</div>
+        </div>
+        <button onClick={handleLogout} style={{background:"transparent",border:`1px solid ${c.border}`,color:c.dim,fontSize:12,padding:"6px 12px",borderRadius:8,cursor:"pointer"}}>退出</button>
+      </div>
+      <div style={{padding:"0 20px"}}>
+        {tab==="form"&&<FormView onSave={handleSave}/>}
+        {tab==="stats"&&<StatsView trades={trades}/>}
+        {tab==="list"&&<ListView trades={trades} onDelete={handleDelete}/>}
+        {tab==="export"&&<ExportView trades={trades}/>}
+      </div>
+    </div>
+    <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#0a0a0a",borderTop:`1px solid #181818`,display:"flex"}}>
+      {tabs.map(t=><button key={t.key} onClick={()=>setTab(t.key)}
+        style={{flex:1,padding:"15px 0",border:"none",background:"transparent",
+        color:tab===t.key?c.gold:c.dim,fontSize:12,cursor:"pointer",
+        borderTop:tab===t.key?`2px solid ${c.gold}`:`2px solid transparent`,
+        fontWeight:tab===t.key?600:400}}>
+        {t.label}
+      </button>)}
+    </div>
+  </div>;
+}
+
+function ListView({trades,onDelete}){
+  if(!trades.length)return <div style={{textAlign:"center",color:c.dim,padding:60,fontSize:14}}>暂无记录</div>;
+  return <div>{trades.map(t=><ListRow key={t.id} trade={t} onDelete={onDelete}/>)}</div>;
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
