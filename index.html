@@ -27,10 +27,10 @@ const SUPABASE_KEY = "sb_publishable_VkRuGBzafqD7r481XsDdBw_8QrR73hc";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── CONSTANTS ──
-const modeLabels = {zt:"抓涨停",dx:"低吸",qx:"情绪单"};
+const modeLabels = {zt:"抓涨停",dx:"低吸",qx:"情绪单",zg:"追高",qs:"趋势",lt:"龙头",tb:"2B",hd:"回调",tp:"突破",nz:"N字"};
 const emotionOpts = ["冷静","兴奋","犹豫","焦虑","不确定","强烈直觉"];
 const exitReasonOpts = ["不及预期主动走","止损","冲高回落卖出","扛单后割","卖飞了（踏空）","正常获利","其他"];
-const verdictOpts = ["执行完美","逻辑对执行差","逻辑错执行对","逻辑错执行也差"];
+const verdictOpts = ["执行完美","逻辑对执行差","逻辑对执行欠佳","逻辑错执行对","逻辑错执行也差"];
 const holdReasonOpts = [{value:"洗盘判断",label:"判断是洗盘"},{value:"不确定拖着",label:"不确定拖着"},{value:"不想认错",label:"不想认错"},{value:"其他",label:"其他"}];
 
 const emptyForm = () => ({
@@ -98,7 +98,7 @@ function Btn({children,onClick,variant="primary",disabled=false,style={}}){
 }
 
 function ModeBadge({mode}){
-  const map={zt:{bg:"#1a0e00",br:c.gold,tx:c.gold},dx:{bg:"#001a0e",br:c.green,tx:c.green},qx:{bg:"#1a0000",br:c.red,tx:c.red}};
+  const map={zt:{bg:"#1a0e00",br:c.gold,tx:c.gold},dx:{bg:"#001a0e",br:c.green,tx:c.green},qx:{bg:"#1a0000",br:c.red,tx:c.red},zg:{bg:"#0d0d1a",br:"#7c8cf8",tx:"#7c8cf8"},qs:{bg:"#0d0d1a",br:"#7c8cf8",tx:"#7c8cf8"},lt:{bg:"#1a0e00",br:"#f8a84b",tx:"#f8a84b"},tb:{bg:"#001a1a",br:"#4bcfcf",tx:"#4bcfcf"},hd:{bg:"#001a1a",br:"#4bcfcf",tx:"#4bcfcf"},nz:{bg:"#0d1a0d",br:"#7cf87c",tx:"#7cf87c"}};
   const s=map[mode]||{bg:"#1a1a1a",br:c.border,tx:c.dim};
   return <span style={{padding:"3px 10px",borderRadius:12,border:`1px solid ${s.br}`,background:s.bg,color:s.tx,fontSize:12,fontWeight:600}}>{modeLabels[mode]??mode}</span>;
 }
@@ -126,7 +126,7 @@ function Toast({msg}){
 
 // ── STATS ──
 function computeStats(trades){
-  const byMode={zt:[],dx:[],qx:[]};
+  const byMode={zt:[],dx:[],qx:[],zg:[],qs:[],lt:[],tb:[],hd:[],tp:[],nz:[]};
   trades.forEach(t=>{if(byMode[t.mode])byMode[t.mode].push(t);});
   function ms(arr){
     if(!arr.length)return null;
@@ -145,7 +145,7 @@ function computeStats(trades){
       hitZTCount:arr.filter(t=>t.hit_zt==="yes").length,
     };
   }
-  return{zt:ms(byMode.zt),dx:ms(byMode.dx),qx:ms(byMode.qx),total:trades.length};
+  return{zt:ms(byMode.zt),dx:ms(byMode.dx),qx:ms(byMode.qx),zg:ms(byMode.zg),qs:ms(byMode.qs),lt:ms(byMode.lt),tb:ms(byMode.tb),hd:ms(byMode.hd),tp:ms(byMode.tp),nz:ms(byMode.nz),total:trades.length};
 }
 
 // ── AUTH VIEW ──
@@ -244,7 +244,7 @@ function FormView({onSave}){
     {step===0&&<div>
       <Field><Label required>日期</Label><Input type="date" value={form.date} onChange={set("date")}/></Field>
       <Field><Label required>股票代码 / 名称</Label><Input value={form.stock} onChange={set("stock")} placeholder="如 000001 平安银行"/></Field>
-      <Field><Label required>模式</Label><Chips value={form.mode} onChange={set("mode")} options={[{value:"zt",label:"抓涨停"},{value:"dx",label:"低吸"},{value:"qx",label:"情绪单"}]}/></Field>
+      <Field><Label required>模式</Label><Chips value={form.mode} onChange={set("mode")} options={[{value:"zt",label:"抓涨停"},{value:"dx",label:"低吸"},{value:"qx",label:"情绪单"},{value:"zg",label:"追高"},{value:"qs",label:"趋势"},{value:"lt",label:"龙头"},{value:"tb",label:"2B"},{value:"hd",label:"回调"},{value:"tp",label:"突破"},{value:"nz",label:"N字"}]}/></Field>
       <Field><Label>入场逻辑（框架层面）</Label><Textarea value={form.entry_reason} onChange={set("entry_reason")} placeholder="符合什么条件？板块/量能/形态等"/></Field>
       <Field><Label>实际触发（直觉/信号）</Label><Textarea value={form.entry_trigger} onChange={set("entry_trigger")} placeholder="最终为什么是这只？那一刻在想什么"/></Field>
       <Field><Label>入场时情绪</Label><Chips value={form.entry_emotion} onChange={set("entry_emotion")} options={emotionOpts}/></Field>
@@ -349,11 +349,18 @@ function StatsView({trades}){
     <ModeBlock mode="zt" s={stats.zt}/><Divider/>
     <ModeBlock mode="dx" s={stats.dx}/><Divider/>
     <ModeBlock mode="qx" s={stats.qx}/>
+    {stats.zg&&<><Divider/><ModeBlock mode="zg" s={stats.zg}/></>}
+    {stats.qs&&<><Divider/><ModeBlock mode="qs" s={stats.qs}/></>}
+    {stats.lt&&<><Divider/><ModeBlock mode="lt" s={stats.lt}/></>}
+    {stats.tb&&<><Divider/><ModeBlock mode="tb" s={stats.tb}/></>}
+    {stats.hd&&<><Divider/><ModeBlock mode="hd" s={stats.hd}/></>}
+    {stats.tp&&<><Divider/><ModeBlock mode="tp" s={stats.tp}/></>}
+    {stats.nz&&<><Divider/><ModeBlock mode="nz" s={stats.nz}/></>}
   </div>;
 }
 
 // ── LIST VIEW ──
-function ListRow({trade,onDelete}){
+function ListRow({trade,onDelete,onEdit}){
   const [open,setOpen]=useState(false);
   return <div style={{background:c.card,border:`1px solid #1a1a1a`,borderRadius:12,marginBottom:8,overflow:"hidden"}}>
     <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",cursor:"pointer"}}>
@@ -376,7 +383,10 @@ function ListRow({trade,onDelete}){
       {trade.did_hold==="yes"&&<div style={{marginTop:6,fontSize:13,color:c.red}}>⚠ 扛单：{trade.hold_reason}</div>}
       {trade.verdict&&<div style={{marginTop:6,fontSize:13,color:c.gold}}>评级：{trade.verdict}</div>}
       {trade.note&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>备注：<span style={{color:"#ccc"}}>{trade.note}</span></div>}
-      <button onClick={()=>onDelete(trade.id)} style={{marginTop:14,padding:"7px 16px",borderRadius:8,background:"transparent",border:`1px solid #2a2a2a`,color:c.dim,fontSize:12,cursor:"pointer"}}>删除</button>
+      <div style={{display:"flex",gap:8,marginTop:14}}>
+        <button onClick={()=>onEdit(trade)} style={{flex:1,padding:"7px 0",borderRadius:8,background:"#1e1608",border:`1px solid ${c.gold}44`,color:c.gold,fontSize:12,cursor:"pointer"}}>编辑</button>
+        <button onClick={()=>onDelete(trade.id)} style={{flex:1,padding:"7px 0",borderRadius:8,background:"transparent",border:`1px solid #2a2a2a`,color:c.dim,fontSize:12,cursor:"pointer"}}>删除</button>
+      </div>
     </div>}
   </div>;
 }
@@ -410,10 +420,53 @@ function ExportView({trades}){
           {copied?"✓ 已复制到剪贴板":`复制全部数据（${trades.length} 笔）`}
         </Btn>
         <div style={{fontSize:11,color:c.dim,textAlign:"center",marginTop:10}}>
-          粘贴给Claude → 他会帮你分析模式和问题
+          粘贴给AI → 帮你分析模式和问题
         </div>
       </>
     }
+  </div>;
+}
+
+
+// ── EDIT MODAL ──
+function EditModal({trade, onSave, onClose}){
+  const [form,setForm]=useState({...trade});
+  const [saving,setSaving]=useState(false);
+  const set=k=>v=>setForm(f=>({...f,[k]:v}));
+
+  async function handleSave(){
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+  }
+
+  return <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:100,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+    <div style={{background:"#111",borderRadius:"20px 20px 0 0",maxHeight:"90vh",overflowY:"auto",padding:"20px 20px 40px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div style={{fontSize:16,fontWeight:700}}>编辑记录</div>
+        <button onClick={onClose} style={{background:"transparent",border:"none",color:c.muted,fontSize:22,cursor:"pointer",padding:"0 4px"}}>×</button>
+      </div>
+      <Field><Label required>日期</Label><Input type="date" value={form.date} onChange={set("date")}/></Field>
+      <Field><Label required>股票代码 / 名称</Label><Input value={form.stock} onChange={set("stock")} placeholder="如 000001 平安银行"/></Field>
+      <Field><Label required>模式</Label><Chips value={form.mode} onChange={set("mode")} options={[{value:"zt",label:"抓涨停"},{value:"dx",label:"低吸"},{value:"qx",label:"情绪单"},{value:"zg",label:"追高"},{value:"qs",label:"趋势"},{value:"lt",label:"龙头"},{value:"tb",label:"2B"},{value:"hd",label:"回调"},{value:"tp",label:"突破"},{value:"nz",label:"N字"}]}/></Field>
+      <Field><Label>入场逻辑</Label><Textarea value={form.entry_reason||""} onChange={set("entry_reason")} placeholder="符合什么条件？"/></Field>
+      <Field><Label>实际触发</Label><Textarea value={form.entry_trigger||""} onChange={set("entry_trigger")} placeholder="那一刻在想什么"/></Field>
+      <Field><Label>入场时情绪</Label><Chips value={form.entry_emotion||""} onChange={set("entry_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>预设出场条件</Label><Textarea value={form.plan_exit||""} onChange={set("plan_exit")} placeholder="买入时想好的"/></Field>
+      <Field><Label>实际出场原因</Label><Dropdown value={form.exit_reason||""} onChange={set("exit_reason")} placeholder="选择出场原因" options={exitReasonOpts}/></Field>
+      <Field><Label>出场时情绪</Label><Chips value={form.exit_emotion||""} onChange={set("exit_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>持仓天数</Label><Input type="number" value={form.held_days||""} onChange={set("held_days")} placeholder="0 = 当天出"/></Field>
+      <Field><Label>盈亏 %</Label><Input type="number" value={form.pnl_pct||""} onChange={set("pnl_pct")} placeholder="-7 或 +3.5"/></Field>
+      <Field><Label>当天是否成功打到涨停？</Label><Chips value={form.hit_zt||""} onChange={set("hit_zt")} options={[{value:"yes",label:"✓ 打到了"},{value:"no",label:"✗ 没打到"},{value:"na",label:"不适用"}]}/></Field>
+      <Field><Label>是否扛单了？</Label><Chips value={form.did_hold||""} onChange={set("did_hold")} options={[{value:"no",label:"没有"},{value:"yes",label:"扛了"}]}/></Field>
+      {form.did_hold==="yes"&&<Field><Label>扛单原因</Label><Chips value={form.hold_reason||""} onChange={set("hold_reason")} options={holdReasonOpts}/></Field>}
+      <Field><Label>执行评级</Label><Dropdown value={form.verdict||""} onChange={set("verdict")} placeholder="综合评价" options={verdictOpts}/></Field>
+      <Field><Label>备注</Label><Textarea value={form.note||""} onChange={set("note")} placeholder="任何想记下来的" rows={3}/></Field>
+      <div style={{display:"flex",gap:10,marginTop:8}}>
+        <Btn onClick={onClose} variant="ghost" style={{flex:1}}>取消</Btn>
+        <Btn onClick={handleSave} disabled={saving} style={{flex:2}}>{saving?"保存中…":"保存修改"}</Btn>
+      </div>
+    </div>
   </div>;
 }
 
@@ -423,6 +476,7 @@ function App(){
   const [trades,setTrades]=useState([]);
   const [tab,setTab]=useState("form");
   const [toast,setToast]=useState("");
+  const [editingTrade,setEditingTrade]=useState(null);
   const [loading,setLoading]=useState(true);
 
   function showToast(msg){setToast(msg);setTimeout(()=>setToast(""),2000);}
@@ -458,6 +512,15 @@ function App(){
     if(!error)setTrades(t=>t.filter(x=>x.id!==id));
   }
 
+  async function handleEdit(form){
+    const {data,error}=await sb.from("trades").update({...form}).eq("id",form.id).select();
+    if(!error&&data){
+      setTrades(t=>t.map(x=>x.id===form.id?data[0]:x));
+      setEditingTrade(null);
+      showToast("已更新");
+    } else alert("更新失败："+error?.message);
+  }
+
   async function handleLogout(){
     await sb.auth.signOut();
   }
@@ -481,7 +544,8 @@ function App(){
       <div style={{padding:"0 20px"}}>
         {tab==="form"&&<FormView onSave={handleSave}/>}
         {tab==="stats"&&<StatsView trades={trades}/>}
-        {tab==="list"&&<ListView trades={trades} onDelete={handleDelete}/>}
+        {tab==="list"&&<ListView trades={trades} onDelete={handleDelete} onEdit={setEditingTrade}/>}
+        {editingTrade&&<EditModal trade={editingTrade} onSave={handleEdit} onClose={()=>setEditingTrade(null)}/>}
         {tab==="export"&&<ExportView trades={trades}/>}
       </div>
     </div>
@@ -497,9 +561,9 @@ function App(){
   </div>;
 }
 
-function ListView({trades,onDelete}){
+function ListView({trades,onDelete,onEdit}){
   if(!trades.length)return <div style={{textAlign:"center",color:c.dim,padding:60,fontSize:14}}>暂无记录</div>;
-  return <div>{trades.map(t=><ListRow key={t.id} trade={t} onDelete={onDelete}/>)}</div>;
+  return <div>{trades.map(t=><ListRow key={t.id} trade={t} onDelete={onDelete} onEdit={onEdit}/>)}</div>;
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
