@@ -28,8 +28,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── CONSTANTS ──
 const modeLabels = {zt:"抓涨停",dx:"低吸",qx:"情绪单",zg:"追高",qs:"趋势",lt:"龙头",tb:"2B",hd:"回调",tp:"突破",nz:"N字"};
-const emotionOpts = ["冷静","兴奋","犹豫","焦虑","不确定","强烈直觉"];
-const exitReasonOpts = ["不及预期主动走","止损","冲高回落卖出","扛单后割","卖飞了（踏空）","正常获利","其他"];
+const entryEmotionOpts = ["冷静","确实符合模式","觉得符合模式","直觉想试","直觉大过分析","50%五五开","60%把握","80%把握","90%把握","兴奋","冲动","非常冲动","冲动到没看指标","被上涨绑架","焦虑","FOMO","不确定"];
+const exitEmotionOpts = ["冷静","成本锚定","不愿认错","损失厌恶","卖飞恐惧","贪婪不卖想赚更多","焦虑","睡着or没看盘","心态崩了","脑子不清醒","不确定"];
+const exitReasonOpts = ["不及预期主动走","止损","冲高不持续","冲高回落卖出","高开撑不住","低开不及预期","趋势走坏","跌破支撑","黑天鹅大阴线","板块走弱","急跌被吓","行情走弱","扛单后割","卖飞了（踏空）","正常获利","其他"];
 const verdictOpts = ["执行完美","逻辑对执行差","逻辑对执行欠佳","逻辑错执行对","逻辑错执行也差"];
 const holdReasonOpts = [{value:"洗盘判断",label:"判断是洗盘"},{value:"不确定拖着",label:"不确定拖着"},{value:"不想认错",label:"不想认错"},{value:"其他",label:"其他"}];
 
@@ -71,11 +72,17 @@ function Dropdown({value,onChange,options,placeholder}){
     {options.map(o=><option key={o.value??o} value={o.value??o}>{o.label??o}</option>)}
   </select>;
 }
-function Chips({value,onChange,options}){
+function Chips({value,onChange,options,multi=false}){
+  function isActive(v){ return multi?(value||[]).includes(v):value===v; }
+  function toggle(v){
+    if(!multi){ onChange(isActive(v)?"":v); return; }
+    const arr=value||[];
+    onChange(isActive(v)?arr.filter(x=>x!==v):[...arr,v]);
+  }
   return <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
     {options.map(o=>{
-      const v=o.value??o,active=value===v;
-      return <button key={v} onClick={()=>onChange(active?"":v)}
+      const v=o.value??o,active=isActive(v);
+      return <button key={v} onClick={()=>toggle(v)}
         style={{padding:"8px 16px",borderRadius:20,fontSize:13,cursor:"pointer",transition:"all .15s",
         border:active?`1.5px solid ${c.gold}`:`1.5px solid ${c.border}`,
         background:active?"#1e1608":"#0d0d0d",color:active?c.gold:c.dim}}>
@@ -247,14 +254,14 @@ function FormView({onSave}){
       <Field><Label required>模式</Label><Chips value={form.mode} onChange={set("mode")} options={[{value:"zt",label:"抓涨停"},{value:"dx",label:"低吸"},{value:"qx",label:"情绪单"},{value:"zg",label:"追高"},{value:"qs",label:"趋势"},{value:"lt",label:"龙头"},{value:"tb",label:"2B"},{value:"hd",label:"回调"},{value:"tp",label:"突破"},{value:"nz",label:"N字"}]}/></Field>
       <Field><Label>入场逻辑（框架层面）</Label><Textarea value={form.entry_reason} onChange={set("entry_reason")} placeholder="符合什么条件？板块/量能/形态等"/></Field>
       <Field><Label>实际触发（直觉/信号）</Label><Textarea value={form.entry_trigger} onChange={set("entry_trigger")} placeholder="最终为什么是这只？那一刻在想什么"/></Field>
-      <Field><Label>入场时情绪</Label><Chips value={form.entry_emotion} onChange={set("entry_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>入场时情绪（可多选）</Label><Chips value={form.entry_emotion} onChange={set("entry_emotion")} options={entryEmotionOpts} multi={true}/></Field>
       <Field><Label>预设出场条件</Label><Textarea value={form.plan_exit} onChange={set("plan_exit")} placeholder="买入时想好的：什么情况走，预期涨幅是多少"/></Field>
       <Btn onClick={()=>setStep(1)}>下一步 →</Btn>
     </div>}
 
     {step===1&&<div>
       <Field><Label>实际出场原因</Label><Dropdown value={form.exit_reason} onChange={set("exit_reason")} placeholder="选择出场原因" options={exitReasonOpts}/></Field>
-      <Field><Label>出场时情绪</Label><Chips value={form.exit_emotion} onChange={set("exit_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>出场时情绪（可多选）</Label><Chips value={form.exit_emotion} onChange={set("exit_emotion")} options={exitEmotionOpts} multi={true}/></Field>
       <Field><Label>持仓天数</Label><Input type="number" value={form.held_days} onChange={set("held_days")} placeholder="0 = 当天出"/></Field>
       <Field><Label>盈亏 %</Label><Input type="number" value={form.pnl_pct} onChange={set("pnl_pct")} placeholder="-7 或 +3.5"/></Field>
       <Field><Label>当天是否成功打到涨停？</Label><Chips value={form.hit_zt} onChange={set("hit_zt")} options={[{value:"yes",label:"✓ 打到了"},{value:"no",label:"✗ 没打到"},{value:"na",label:"不适用"}]}/></Field>
@@ -374,12 +381,14 @@ function ListRow({trade,onDelete,onEdit}){
       </div>
     </div>
     {open&&<div style={{padding:"0 16px 16px",borderTop:`1px solid #1a1a1a`}}>
-      {trade.entry_reason&&<div style={{marginTop:12,fontSize:13,color:c.muted}}>入场逻辑：<span style={{color:"#ccc"}}>{trade.entry_reason}</span></div>}
+      {trade.entry_emotion&&(Array.isArray(trade.entry_emotion)?trade.entry_emotion.length>0:trade.entry_emotion)&&<div style={{marginTop:12,fontSize:13,color:c.muted}}>入场情绪：<span style={{color:"#ccc"}}>{Array.isArray(trade.entry_emotion)?trade.entry_emotion.join("、"):trade.entry_emotion}</span></div>}
+      {trade.entry_reason&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>入场逻辑：<span style={{color:"#ccc"}}>{trade.entry_reason}</span></div>}
       {trade.entry_trigger&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>实际触发：<span style={{color:"#ccc"}}>{trade.entry_trigger}</span></div>}
       {trade.plan_exit&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>预设出场：<span style={{color:"#ccc"}}>{trade.plan_exit}</span></div>}
       {trade.exit_reason&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>实际出场：<span style={{color:"#ccc"}}>{trade.exit_reason}</span></div>}
       {trade.hit_zt==="yes"&&<div style={{marginTop:6,fontSize:13,color:c.green}}>✓ 成功打到涨停</div>}
       {trade.hit_zt==="no"&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>✗ 未打到涨停</div>}
+      {trade.exit_emotion&&(Array.isArray(trade.exit_emotion)?trade.exit_emotion.length>0:trade.exit_emotion)&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>出场情绪：<span style={{color:"#ccc"}}>{Array.isArray(trade.exit_emotion)?trade.exit_emotion.join("、"):trade.exit_emotion}</span></div>}
       {trade.did_hold==="yes"&&<div style={{marginTop:6,fontSize:13,color:c.red}}>⚠ 扛单：{trade.hold_reason}</div>}
       {trade.verdict&&<div style={{marginTop:6,fontSize:13,color:c.gold}}>评级：{trade.verdict}</div>}
       {trade.note&&<div style={{marginTop:6,fontSize:13,color:c.muted}}>备注：<span style={{color:"#ccc"}}>{trade.note}</span></div>}
@@ -451,7 +460,7 @@ function EditModal({trade, onSave, onClose}){
       <Field><Label required>模式</Label><Chips value={form.mode} onChange={set("mode")} options={[{value:"zt",label:"抓涨停"},{value:"dx",label:"低吸"},{value:"qx",label:"情绪单"},{value:"zg",label:"追高"},{value:"qs",label:"趋势"},{value:"lt",label:"龙头"},{value:"tb",label:"2B"},{value:"hd",label:"回调"},{value:"tp",label:"突破"},{value:"nz",label:"N字"}]}/></Field>
       <Field><Label>入场逻辑</Label><Textarea value={form.entry_reason||""} onChange={set("entry_reason")} placeholder="符合什么条件？"/></Field>
       <Field><Label>实际触发</Label><Textarea value={form.entry_trigger||""} onChange={set("entry_trigger")} placeholder="那一刻在想什么"/></Field>
-      <Field><Label>入场时情绪</Label><Chips value={form.entry_emotion||""} onChange={set("entry_emotion")} options={emotionOpts}/></Field>
+      <Field><Label>入场时情绪（可多选）</Label><Chips value={form.entry_emotion||[]} onChange={set("entry_emotion")} options={entryEmotionOpts} multi={true}/></Field>
       <Field><Label>预设出场条件</Label><Textarea value={form.plan_exit||""} onChange={set("plan_exit")} placeholder="买入时想好的"/></Field>
       <Field><Label>实际出场原因</Label><Dropdown value={form.exit_reason||""} onChange={set("exit_reason")} placeholder="选择出场原因" options={exitReasonOpts}/></Field>
       <Field><Label>出场时情绪</Label><Chips value={form.exit_emotion||""} onChange={set("exit_emotion")} options={emotionOpts}/></Field>
